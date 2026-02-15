@@ -1,0 +1,11 @@
+{
+  "name": "简约白底",
+  "platform": "taobao",
+  "canvas": { "width": 800, "height": 800 },
+  "background": { "type": "solid", "colors": ["#FFFFFF"] },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 70, "max_height_pct": 65 },
+    { "type": "title", "x": "center", "y": 730, "font_size": 28, "color": "#333333", "font_weight": "normal" },
+    { "type": "price", "x": "center", "y": 770, "font_size": 24, "color": "#E74C3C", "prefix": "¥" }
+  ]
+}

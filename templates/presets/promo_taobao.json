@@ -1,0 +1,12 @@
+{
+  "name": "促销爆款",
+  "platform": "taobao",
+  "canvas": { "width": 800, "height": 800 },
+  "background": { "type": "gradient", "colors": ["#FF4444", "#FF6B6B"] },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 60, "max_height_pct": 55 },
+    { "type": "title", "x": "center", "y": 40, "font_size": 36, "color": "#FFFFFF", "font_weight": "bold" },
+    { "type": "price", "x": 50, "y": 700, "font_size": 52, "color": "#FFD700", "prefix": "¥" },
+    { "type": "selling_points", "x": 500, "y": 650, "font_size": 20, "color": "#FFFFFF", "style": "tags", "bg_color": "#FF0000CC" }
+  ]
+}
