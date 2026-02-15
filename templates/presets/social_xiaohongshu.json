@@ -1,0 +1,12 @@
+{
+  "name": "社交种草",
+  "platform": "xiaohongshu",
+  "canvas": { "width": 1080, "height": 1440 },
+  "background": { "type": "gradient", "colors": ["#FFF5F5", "#FFE0E6"] },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": 400, "max_width_pct": 65, "max_height_pct": 45 },
+    { "type": "title", "x": "center", "y": 80, "font_size": 44, "color": "#D63384", "font_weight": "bold" },
+    { "type": "price", "x": "center", "y": 1300, "font_size": 40, "color": "#E91E63", "prefix": "¥" },
+    { "type": "selling_points", "x": 100, "y": 1100, "font_size": 24, "color": "#AD1457", "style": "tags", "bg_color": "#F8BBD044" }
+  ]
+}

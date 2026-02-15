@@ -1,0 +1,12 @@
+{
+  "name": "高端质感",
+  "platform": "taobao",
+  "canvas": { "width": 800, "height": 800 },
+  "background": { "type": "gradient", "colors": ["#1A1A2E", "#16213E"] },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 55, "max_height_pct": 55 },
+    { "type": "title", "x": "center", "y": 50, "font_size": 32, "color": "#E0C097", "font_weight": "bold" },
+    { "type": "price", "x": "center", "y": 720, "font_size": 36, "color": "#E0C097", "prefix": "¥" },
+    { "type": "selling_points", "x": 50, "y": 680, "font_size": 18, "color": "#CCCCCC", "style": "tags", "bg_color": "#33333388" }
+  ]
+}
