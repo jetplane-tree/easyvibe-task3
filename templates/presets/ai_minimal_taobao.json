@@ -1,0 +1,15 @@
+{
+  "name": "AI简约白底",
+  "platform": "taobao",
+  "canvas": { "width": 800, "height": 800 },
+  "background": {
+    "type": "ai",
+    "style": "minimal",
+    "fallback_colors": ["#FFFFFF", "#F5F5F5"]
+  },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 65, "max_height_pct": 60 },
+    { "type": "title", "x": "center", "y": 730, "font_size": 22, "color": "#555555", "font_weight": "normal" },
+    { "type": "price", "x": "center", "y": 762, "font_size": 20, "color": "#C0392B", "prefix": "¥" }
+  ]
+}

@@ -62,6 +62,20 @@ def _parse_color(color_str: str) -> tuple:
     return (0, 0, 0)
 
 
+def _sample_brightness(image, x, y, w, h):
+    """Sample average brightness of a region on the image. Returns 0-255."""
+    sx, sy = max(0, int(x)), max(0, int(y))
+    ex = min(image.width, sx + int(w))
+    ey = min(image.height, sy + int(h))
+    if ex <= sx or ey <= sy:
+        return 128
+    region = image.crop((sx, sy, ex, ey)).convert("RGB")
+    pixels = list(region.getdata())
+    if not pixels:
+        return 128
+    return sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in pixels) / len(pixels)
+
+
 # --- New rendering helper functions ---
 
 
@@ -223,64 +237,114 @@ def render_image(
     product_info: dict,
     logo: Optional[Image.Image] = None,
     ai_bg_override: Optional[Image.Image] = None,
+    ai_composed_override: Optional[Image.Image] = None,
 ) -> Image.Image:
     """Render a product main image based on template config."""
     canvas_w = template["canvas"]["width"]
     canvas_h = template["canvas"]["height"]
-    canvas = Image.new("RGB", (canvas_w, canvas_h), (255, 255, 255))
-    draw = ImageDraw.Draw(canvas)
 
-    # 1. Draw background
-    bg = template.get("background", {})
-    bg_type = bg.get("type", "solid")
-    bg_colors = bg.get("colors", ["#FFFFFF"])
-    if bg_type == "ai":
-        if ai_bg_override is not None:
-            ai_bg = ai_bg_override
-            if ai_bg.size != (canvas_w, canvas_h):
-                ai_bg = ai_bg.resize((canvas_w, canvas_h), Image.LANCZOS)
-            canvas = ai_bg.convert("RGB")
-            draw = ImageDraw.Draw(canvas)
-        else:
-            from core.bg_generator import generate_ai_background
+    # If ai_composed_override is provided, use it as base (product already in scene)
+    has_composed = ai_composed_override is not None
 
-            try:
-                ai_bgs = generate_ai_background(
-                    product_name=product_info.get("name", "商品"),
-                    style=bg.get("style", "minimal"),
-                    width=canvas_w,
-                    height=canvas_h,
-                    scene_prompt=product_info.get("scene_prompt", ""),
-                    custom_prompt=product_info.get("custom_prompt", ""),
-                    n=1,
-                )
-                canvas = ai_bgs[0]
-                draw = ImageDraw.Draw(canvas)
-            except Exception:
-                fallback_colors = bg.get("fallback_colors", ["#FFFFFF", "#F0F0F0"])
-                _draw_gradient(draw, canvas_w, canvas_h, fallback_colors)
-    elif bg_type == "gradient" and len(bg_colors) >= 2:
-        _draw_gradient(draw, canvas_w, canvas_h, bg_colors)
-    elif bg_type == "solid":
-        canvas.paste(
-            Image.new("RGB", (canvas_w, canvas_h), _parse_color(bg_colors[0]))
-        )
+    if has_composed:
+        canvas = ai_composed_override
+        if canvas.size != (canvas_w, canvas_h):
+            canvas = canvas.resize((canvas_w, canvas_h), Image.LANCZOS)
+        canvas = canvas.convert("RGBA")
+        draw = ImageDraw.Draw(canvas, "RGBA")
+    else:
+        canvas = Image.new("RGB", (canvas_w, canvas_h), (255, 255, 255))
         draw = ImageDraw.Draw(canvas)
+
+    # 1. Draw background (skip if composed override — background already includes product)
+    bg = template.get("background", {})
+    if not has_composed:
+        bg_type = bg.get("type", "solid")
+        bg_colors = bg.get("colors", ["#FFFFFF"])
+        if bg_type == "ai":
+            if ai_bg_override is not None:
+                ai_bg = ai_bg_override
+                if ai_bg.size != (canvas_w, canvas_h):
+                    ai_bg = ai_bg.resize((canvas_w, canvas_h), Image.LANCZOS)
+                canvas = ai_bg.convert("RGB")
+                draw = ImageDraw.Draw(canvas)
+            else:
+                from core.bg_generator import generate_ai_background
+
+                try:
+                    ai_bgs = generate_ai_background(
+                        product_image=product_image,
+                        product_name=product_info.get("name", "商品"),
+                        style=bg.get("style", "minimal"),
+                        width=canvas_w,
+                        height=canvas_h,
+                        scene_prompt=product_info.get("scene_prompt", ""),
+                        custom_prompt=product_info.get("custom_prompt", ""),
+                        n=1,
+                    )
+                    canvas = ai_bgs[0]
+                    draw = ImageDraw.Draw(canvas)
+                except Exception:
+                    fallback_colors = bg.get("fallback_colors", ["#FFFFFF", "#F0F0F0"])
+                    _draw_gradient(draw, canvas_w, canvas_h, fallback_colors)
+        elif bg_type == "gradient" and len(bg_colors) >= 2:
+            _draw_gradient(draw, canvas_w, canvas_h, bg_colors)
+        elif bg_type == "solid":
+            canvas.paste(
+                Image.new("RGB", (canvas_w, canvas_h), _parse_color(bg_colors[0]))
+            )
+            draw = ImageDraw.Draw(canvas)
 
     # 2. Convert canvas to RGBA for alpha compositing
     if canvas.mode != "RGBA":
         canvas = canvas.convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
 
-    # 3. Decoration layer: overlay bands + bokeh
-    if bg.get("overlay_color"):
-        _draw_overlay_bands(canvas, bg)
-    _draw_bokeh(canvas, bg)
+    # 3. Decoration layer: overlay bands + bokeh (skip for composed images — AI bg is complete)
+    if not has_composed:
+        if bg.get("overlay_color"):
+            _draw_overlay_bands(canvas, bg)
+        _draw_bokeh(canvas, bg)
 
-    # 4. Render elements
+    # 4. Render elements (skip product_image if composed override — product already in scene)
     for elem in template.get("elements", []):
         elem_type = elem["type"]
+
+        # Adaptive text color for composed images — analyze background brightness
+        if has_composed and elem_type in ("title", "price", "selling_points"):
+            y_pos = elem.get("y", 0)
+            x_pos = elem.get("x", 0)
+            font_sz = elem.get("font_size", 28)
+            is_center = (x_pos == "center")
+            sx = 0 if is_center else x_pos
+            sw = canvas_w if is_center else canvas_w // 2
+            brightness = _sample_brightness(canvas, sx, y_pos, sw, font_sz + 20)
+
+            elem = dict(elem)  # copy to avoid mutating template
+            if brightness < 128:
+                # Dark background → light text
+                if elem_type == "price":
+                    elem["color"] = "#FFD54F"
+                elif elem_type == "selling_points":
+                    elem["color"] = "#FFFFFF99"
+                else:
+                    elem["color"] = "#FFFFFFDD"
+                elem["stroke_color"] = "#00000055"
+                elem.setdefault("stroke_width", 1)
+            else:
+                # Light background → dark text
+                if elem_type == "price":
+                    elem["color"] = "#C0392B"
+                elif elem_type == "selling_points":
+                    elem["color"] = "#55555599"
+                else:
+                    elem["color"] = "#333333DD"
+                elem["stroke_color"] = "#FFFFFF44"
+                elem.setdefault("stroke_width", 1)
+
         if elem_type == "product_image":
+            if has_composed:
+                continue
             _place_product_image(canvas, product_image, elem, canvas_w, canvas_h)
         elif elem_type == "title":
             title_text = product_info.get("name", "")
@@ -365,8 +429,10 @@ def _draw_text(draw, text, elem, canvas_w):
         text_w = bbox[2] - bbox[0]
         x = (canvas_w - text_w) // 2
 
-    # Shadow (offset 2px, semi-transparent)
-    shadow_color = (0, 0, 0, 80)
+    # Shadow: auto-contrast based on text brightness
+    r, g, b = color[:3]
+    text_brightness = 0.299 * r + 0.587 * g + 0.114 * b
+    shadow_color = (0, 0, 0, 80) if text_brightness > 128 else (255, 255, 255, 60)
     draw.text((x + 2, y + 2), text, fill=shadow_color, font=font)
 
     # Main text with optional stroke
@@ -380,7 +446,7 @@ def _draw_text(draw, text, elem, canvas_w):
 
 
 def _draw_selling_points(canvas, draw, points, elem, canvas_w):
-    """Draw selling point tags with vertical or horizontal layout."""
+    """Draw selling point tags with vertical, horizontal, or plain layout."""
     if not points:
         return
     font_size = elem.get("font_size", 18)
@@ -392,7 +458,20 @@ def _draw_selling_points(canvas, draw, points, elem, canvas_w):
     padding = 8
     layout = elem.get("layout", "vertical")
 
-    if layout == "horizontal":
+    if layout == "plain":
+        # Plain text layout: points joined by · separator, text shadow only, no background
+        separator = "  ·  "
+        full_text = separator.join(points)
+        bbox = draw.textbbox((0, 0), full_text, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = (canvas_w - text_w) // 2 if x_start == "center" else x_start
+        # Shadow: auto-contrast based on text brightness
+        r, g, b = color[:3]
+        text_brightness = 0.299 * r + 0.587 * g + 0.114 * b
+        shadow_color = (0, 0, 0, 60) if text_brightness > 128 else (255, 255, 255, 40)
+        draw.text((x + 1, y_start + 1), full_text, fill=shadow_color, font=font)
+        draw.text((x, y_start), full_text, fill=color, font=font)
+    elif layout == "horizontal":
         # Horizontal capsule layout with auto-wrap
         gap = 10
         cur_x = x_start

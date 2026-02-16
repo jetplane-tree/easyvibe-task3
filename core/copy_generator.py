@@ -7,7 +7,10 @@ from core.platforms import get_platform_config
 
 load_dotenv()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+client = OpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY", ""),
+    base_url="https://api.deepseek.com",
+)
 
 COPY_STYLES = {
     "promo": {
@@ -57,7 +60,7 @@ def generate_copy(
 {{"candidates": [{{"title": "商品标题", "selling_points": ["卖点描述1", "卖点描述2", "卖点描述3"]}}, {{"title": "商品标题", "selling_points": ["卖点描述1", "卖点描述2", "卖点描述3"]}}]}}"""
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="deepseek-chat",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.8,
     )

@@ -1,0 +1,16 @@
+{
+  "name": "AI社交种草",
+  "platform": "xiaohongshu",
+  "canvas": { "width": 1080, "height": 1440 },
+  "background": {
+    "type": "ai",
+    "style": "social",
+    "fallback_colors": ["#FFF5F0", "#FFE8E0"]
+  },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": 400, "max_width_pct": 60, "max_height_pct": 45 },
+    { "type": "title", "x": "center", "y": 80, "font_size": 36, "color": "#FFFFFF", "font_weight": "bold", "stroke_width": 1, "stroke_color": "#00000033" },
+    { "type": "selling_points", "x": "center", "y": 1280, "font_size": 20, "color": "#FFFFFFBB", "layout": "plain" },
+    { "type": "price", "x": "center", "y": 1330, "font_size": 32, "color": "#E8847C", "prefix": "¥", "font_weight": "bold", "stroke_width": 1, "stroke_color": "#00000022" }
+  ]
+}

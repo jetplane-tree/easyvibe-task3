@@ -71,6 +71,7 @@ def compose_images(
     logo: Optional[Image.Image] = None,
     skip_bg_removal: bool = False,
     ai_bg_override: Optional[Image.Image] = None,
+    ai_composed_override: Optional[Image.Image] = None,
 ) -> dict[str, Image.Image]:
     """Compose product images for multiple platforms.
 
@@ -81,6 +82,8 @@ def compose_images(
         template_style: style key (promo, minimal, premium, fresh, social)
         logo: optional store logo
         skip_bg_removal: skip rembg if image already has transparent bg
+        ai_bg_override: optional pre-generated background image (v1 style)
+        ai_composed_override: optional pre-composed image with product in scene (v2 style)
 
     Returns:
         Dict mapping platform key to composed PIL Image
@@ -93,7 +96,7 @@ def compose_images(
     results = {}
     for platform in platforms:
         template = _find_template_for_platform(platform, template_style)
-        composed = render_image(template, clean_image, product_info, logo=logo, ai_bg_override=ai_bg_override)
+        composed = render_image(template, clean_image, product_info, logo=logo, ai_bg_override=ai_bg_override, ai_composed_override=ai_composed_override)
         results[platform] = composed
 
     return results

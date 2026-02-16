@@ -2,11 +2,16 @@
   "name": "高端质感",
   "platform": "taobao",
   "canvas": { "width": 800, "height": 800 },
-  "background": { "type": "gradient", "colors": ["#1A1A2E", "#16213E"] },
+  "background": {
+    "type": "gradient",
+    "colors": ["#1A1A2E", "#16213E"],
+    "overlay_color": "#000000",
+    "bokeh": { "color": "#FFD700", "count": 8, "seed": 88 }
+  },
   "elements": [
-    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 55, "max_height_pct": 55 },
-    { "type": "title", "x": "center", "y": 50, "font_size": 32, "color": "#E0C097", "font_weight": "bold" },
-    { "type": "price", "x": "center", "y": 720, "font_size": 36, "color": "#E0C097", "prefix": "¥" },
-    { "type": "selling_points", "x": 50, "y": 680, "font_size": 18, "color": "#CCCCCC", "style": "tags", "bg_color": "#33333388" }
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 55, "max_height_pct": 55, "glow_color": "#4A90D9" },
+    { "type": "title", "x": "center", "y": 50, "font_size": 32, "color": "#E0C097", "font_weight": "bold", "style": "banner", "banner_color": "#00000088" },
+    { "type": "price", "x": "center", "y": 720, "font_size": 36, "color": "#FFFFFF", "prefix": "¥", "style": "badge", "badge_colors": ["#C9A84C", "#8B6914"] },
+    { "type": "selling_points", "x": 50, "y": 680, "font_size": 18, "color": "#CCCCCC", "bg_color": "#33333388", "layout": "horizontal" }
   ]
 }

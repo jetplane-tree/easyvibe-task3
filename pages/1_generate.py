@@ -106,6 +106,10 @@ if input_method == "在线录入":
     # --- Output section ---
     with col_output:
         if generate_btn:
+            # Clear previous generation state
+            for key in ["gen_images", "gen_copies", "gen_saved", "bg_candidates"]:
+                st.session_state.pop(key, None)
+
             if not uploaded_file or not product_name or not sp1 or not selected_platforms:
                 st.error("请填写商品名称、至少一个卖点，上传图片，并选择至少一个平台")
             else:
@@ -123,17 +127,34 @@ if input_method == "在线录入":
 
                 actual_style = f"ai_{template_style}" if use_ai_bg else template_style
 
-                # AI background candidate selection flow
-                selected_ai_bg = None
+                # Store context for later use (radio switch, etc.)
+                st.session_state["gen_context"] = {
+                    "product_info": product_info,
+                    "selected_platforms": selected_platforms,
+                    "actual_style": actual_style,
+                    "copy_style": copy_style,
+                    "save_to_materials": save_to_materials,
+                    "use_ai_bg": use_ai_bg,
+                    "template_style": template_style,
+                }
+                st.session_state["gen_product_img"] = product_img
+                st.session_state["gen_logo"] = logo
+
+                # AI background candidate generation
                 if use_ai_bg:
+                    from core.bg_remover import remove_background
                     from core.platforms import get_platform_config
                     platform_cfg = get_platform_config(selected_platforms[0])
                     canvas_w = platform_cfg["width"]
                     canvas_h = platform_cfg["height"]
 
+                    with st.spinner("正在去除背景..."):
+                        rgba_product = remove_background(product_img)
+
                     with st.spinner("正在生成 AI 背景候选..."):
                         try:
                             bg_candidates = generate_ai_background(
+                                product_image=rgba_product,
                                 product_name=product_name,
                                 style=template_style,
                                 width=canvas_w,
@@ -153,122 +174,167 @@ if input_method == "在线录入":
                             }
                         except Exception as e:
                             st.warning(f"AI 背景生成失败，将使用模板默认背景: {e}")
-
-                if "bg_candidates" in st.session_state and use_ai_bg:
-                    bg_candidates = st.session_state["bg_candidates"]
-                    st.subheader("选择 AI 背景")
-                    cols = st.columns(4)
-                    for i, bg_img in enumerate(bg_candidates):
-                        with cols[i]:
-                            st.image(bg_img, use_container_width=True, caption=f"方案 {i+1}")
-
-                    selected_bg_idx = st.radio(
-                        "选择背景方案",
-                        options=list(range(len(bg_candidates))),
-                        format_func=lambda x: f"方案 {x+1}",
-                        horizontal=True,
-                        key="inline_bg_select",
-                    )
-                    selected_ai_bg = bg_candidates[selected_bg_idx]
-
-                    if st.button("🔄 换一批背景", key="inline_regenerate"):
-                        st.session_state.pop("bg_candidates", None)
-                        st.rerun()
-
-                # Generate images
-                with st.spinner("正在生成主图..."):
-                    images = compose_images(
-                        product_image=product_img,
-                        product_info=product_info,
-                        platforms=selected_platforms,
-                        template_style=actual_style,
-                        logo=logo,
-                        ai_bg_override=selected_ai_bg,
-                    )
-
-                # Generate copy
-                with st.spinner("正在生成文案..."):
-                    try:
-                        copies = generate_copy(
-                            product_name=product_name,
-                            selling_points=selling_points,
-                            price=price,
-                            platform=selected_platforms[0],
-                            style=copy_style,
+                            st.session_state.pop("bg_candidates", None)
+                else:
+                    # Non-AI mode: generate immediately and store results
+                    st.session_state.pop("bg_candidates", None)
+                    with st.spinner("正在生成主图..."):
+                        images = compose_images(
+                            product_image=product_img,
+                            product_info=product_info,
+                            platforms=selected_platforms,
+                            template_style=actual_style,
+                            logo=logo,
                         )
-                    except Exception as e:
-                        st.error(f"文案生成失败: {e}")
-                        copies = []
+                    with st.spinner("正在生成文案..."):
+                        try:
+                            copies = generate_copy(
+                                product_name=product_name,
+                                selling_points=selling_points,
+                                price=price,
+                                platform=selected_platforms[0],
+                                style=copy_style,
+                            )
+                        except Exception as e:
+                            st.error(f"文案生成失败: {e}")
+                            copies = []
+                    st.session_state["gen_images"] = images
+                    st.session_state["gen_copies"] = copies
+                    st.session_state["gen_saved"] = False
 
-                # Save to materials & history if requested
+        # --- Candidate selection (persists across reruns via session_state) ---
+        if "bg_candidates" in st.session_state and st.session_state.get("gen_context", {}).get("use_ai_bg"):
+            bg_candidates = st.session_state["bg_candidates"]
+            st.subheader("选择 AI 背景")
+            cols = st.columns(4)
+            for i, bg_img in enumerate(bg_candidates):
+                with cols[i]:
+                    st.image(bg_img, use_container_width=True, caption=f"方案 {i+1}")
+
+            selected_bg_idx = st.radio(
+                "选择背景方案",
+                options=list(range(len(bg_candidates))),
+                format_func=lambda x: f"方案 {x+1}",
+                horizontal=True,
+                key="inline_bg_select",
+            )
+            selected_ai_composed = bg_candidates[selected_bg_idx]
+
+            col_regen, col_confirm = st.columns(2)
+            with col_regen:
+                if st.button("🔄 重新生成（点击后请再按一键生成）", key="inline_regenerate"):
+                    st.session_state.pop("bg_candidates", None)
+                    st.session_state.pop("gen_images", None)
+                    st.session_state.pop("gen_copies", None)
+                    st.rerun()
+            with col_confirm:
+                if st.button("✅ 使用该方案生成", key="inline_confirm", type="primary"):
+                    ctx = st.session_state["gen_context"]
+                    product_img = st.session_state["gen_product_img"]
+                    logo = st.session_state.get("gen_logo")
+                    product_info = ctx["product_info"]
+                    with st.spinner("正在生成主图..."):
+                        images = compose_images(
+                            product_image=product_img,
+                            product_info=product_info,
+                            platforms=ctx["selected_platforms"],
+                            template_style=ctx["actual_style"],
+                            logo=logo,
+                            skip_bg_removal=True,
+                            ai_composed_override=selected_ai_composed,
+                        )
+                    with st.spinner("正在生成文案..."):
+                        try:
+                            copies = generate_copy(
+                                product_name=product_info["name"],
+                                selling_points=product_info["selling_points"],
+                                price=product_info["price"],
+                                platform=ctx["selected_platforms"][0],
+                                style=ctx["copy_style"],
+                            )
+                        except Exception as e:
+                            st.error(f"文案生成失败: {e}")
+                            copies = []
+                    st.session_state["gen_images"] = images
+                    st.session_state["gen_copies"] = copies
+                    st.session_state["gen_saved"] = False
+                    st.session_state.pop("bg_candidates", None)
+                    st.rerun()
+
+        # --- Display results (persists across reruns) ---
+        if "gen_images" in st.session_state:
+            images = st.session_state["gen_images"]
+            copies = st.session_state.get("gen_copies", [])
+            ctx = st.session_state.get("gen_context", {})
+            product_info = ctx.get("product_info", {})
+
+            # Save to materials & history (only once per generation)
+            if not st.session_state.get("gen_saved"):
                 db = Database()
                 material_id = None
-                if save_to_materials:
-                    # Save uploaded image to disk
+                if ctx.get("save_to_materials") and "gen_product_img" in st.session_state:
                     upload_dir = os.path.join(os.path.dirname(__file__), "..", "data", "uploads")
                     os.makedirs(upload_dir, exist_ok=True)
-                    img_save_path = os.path.join(upload_dir, f"{product_name}_{id(uploaded_file)}.png")
-                    product_img.save(img_save_path)
-                    material_id = db.save_material(product_name, selling_points, price, img_save_path)
+                    p_img = st.session_state["gen_product_img"]
+                    img_save_path = os.path.join(upload_dir, f"{product_info.get('name', 'product')}_{id(p_img)}.png")
+                    p_img.save(img_save_path)
+                    material_id = db.save_material(product_info["name"], product_info.get("selling_points", []), product_info.get("price", 0), img_save_path)
                     st.success("已保存到素材库")
 
-                # Save generation history
                 output_dir = os.path.join(os.path.dirname(__file__), "..", "data", "outputs")
                 os.makedirs(output_dir, exist_ok=True)
                 for platform_key, img in images.items():
-                    out_path = os.path.join(output_dir, f"{product_name}_{platform_key}.png")
+                    out_path = os.path.join(output_dir, f"{product_info.get('name', 'product')}_{platform_key}.png")
                     img.save(out_path)
                     db.save_history(
                         material_id=material_id or 0,
-                        template_name=template_style,
+                        template_name=ctx.get("template_style", ""),
                         platform=platform_key,
-                        copy_style=copy_style,
+                        copy_style=ctx.get("copy_style", ""),
                         image_path=out_path,
                         copies=copies,
                     )
+                st.session_state["gen_saved"] = True
 
-                # Display results
-                st.subheader("生成结果")
+            st.subheader("生成结果")
+            for platform_key, img in images.items():
+                platform_label = PLATFORMS[platform_key]["label"]
+                st.markdown(f"**{platform_label}** ({img.size[0]}x{img.size[1]})")
+                st.image(img, use_container_width=True)
 
+            if copies:
+                st.subheader("候选文案")
+                for i, copy_item in enumerate(copies):
+                    with st.expander(f"文案方案 {i + 1}", expanded=True):
+                        st.markdown(f"**标题：** {copy_item.get('title', '')}")
+                        for sp in copy_item.get("selling_points", []):
+                            st.markdown(f"- {sp}")
+
+            st.subheader("下载")
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zf:
                 for platform_key, img in images.items():
-                    platform_label = PLATFORMS[platform_key]["label"]
-                    st.markdown(f"**{platform_label}** ({img.size[0]}x{img.size[1]})")
-                    st.image(img, use_container_width=True)
-
+                    img_buffer = io.BytesIO()
+                    img.save(img_buffer, format="PNG")
+                    zf.writestr(f"{platform_key}_main.png", img_buffer.getvalue())
                 if copies:
-                    st.subheader("候选文案")
+                    copy_text = ""
                     for i, copy_item in enumerate(copies):
-                        with st.expander(f"文案方案 {i + 1}", expanded=True):
-                            st.markdown(f"**标题：** {copy_item.get('title', '')}")
-                            for sp in copy_item.get("selling_points", []):
-                                st.markdown(f"- {sp}")
+                        copy_text += f"=== 文案方案 {i + 1} ===\n"
+                        copy_text += f"标题：{copy_item.get('title', '')}\n"
+                        for sp in copy_item.get("selling_points", []):
+                            copy_text += f"- {sp}\n"
+                        copy_text += "\n"
+                    zf.writestr("copy.txt", copy_text)
 
-                # Download all as zip
-                st.subheader("下载")
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w") as zf:
-                    for platform_key, img in images.items():
-                        img_buffer = io.BytesIO()
-                        img.save(img_buffer, format="PNG")
-                        zf.writestr(f"{platform_key}_main.png", img_buffer.getvalue())
-                    if copies:
-                        copy_text = ""
-                        for i, copy_item in enumerate(copies):
-                            copy_text += f"=== 文案方案 {i + 1} ===\n"
-                            copy_text += f"标题：{copy_item.get('title', '')}\n"
-                            for sp in copy_item.get("selling_points", []):
-                                copy_text += f"- {sp}\n"
-                            copy_text += "\n"
-                        zf.writestr("copy.txt", copy_text)
-
-                zip_buffer.seek(0)
-                st.download_button(
-                    "📦 下载全部（图片 + 文案）",
-                    data=zip_buffer,
-                    file_name=f"{product_name}_outputs.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                )
+            zip_buffer.seek(0)
+            st.download_button(
+                "📦 下载全部（图片 + 文案）",
+                data=zip_buffer,
+                file_name=f"{product_info.get('name', 'product')}_outputs.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
 
 elif input_method == "批量导入":
     st.info("📋 批量导入功能：上传 Excel 文件 + 图片压缩包")
@@ -367,8 +433,33 @@ elif input_method == "批量导入":
                             "custom_prompt": batch_custom_prompt,
                         }
                         batch_actual_style = f"ai_{batch_style}" if batch_ai_bg else batch_style
+
+                        # For AI bg: early removal + v2 composed override
+                        batch_composed = None
+                        if batch_ai_bg:
+                            from core.bg_remover import remove_background
+                            from core.platforms import get_platform_config
+                            platform_cfg = get_platform_config(batch_platforms[0])
+                            rgba_product = remove_background(product_img)
+                            try:
+                                candidates = generate_ai_background(
+                                    product_image=rgba_product,
+                                    product_name=name,
+                                    style=batch_style,
+                                    width=platform_cfg["width"],
+                                    height=platform_cfg["height"],
+                                    scene_prompt=batch_scene_prompt,
+                                    custom_prompt=batch_custom_prompt,
+                                    n=1,
+                                )
+                                batch_composed = candidates[0]
+                            except Exception:
+                                pass
+
                         images = compose_images(
-                            product_img, product_info_batch, batch_platforms, batch_actual_style
+                            product_img, product_info_batch, batch_platforms, batch_actual_style,
+                            skip_bg_removal=True if batch_composed else False,
+                            ai_composed_override=batch_composed,
                         )
                         for pk, img in images.items():
                             buf = io.BytesIO()
@@ -430,6 +521,10 @@ elif input_method == "从素材库选择":
         )
 
         if st.button("🚀 一键生成", type="primary", key="mat_generate"):
+            # Clear previous generation state
+            for key in ["mat_gen_images", "mat_gen_copies", "mat_gen_saved", "mat_bg_candidates"]:
+                st.session_state.pop(key, None)
+
             if not mat_platforms:
                 st.error("请选择至少一个平台")
             elif not selected_mat.get("image_path") or not os.path.exists(selected_mat["image_path"]):
@@ -446,17 +541,32 @@ elif input_method == "从素材库选择":
 
                 mat_actual_style = f"ai_{mat_template_style}" if mat_ai_bg else mat_template_style
 
-                # AI background candidate selection for materials mode
-                selected_ai_bg = None
+                # Store context for later use
+                st.session_state["mat_gen_context"] = {
+                    "product_info": product_info,
+                    "selected_platforms": mat_platforms,
+                    "actual_style": mat_actual_style,
+                    "copy_style": mat_copy_style,
+                    "mat_id": selected_mat["id"],
+                    "use_ai_bg": mat_ai_bg,
+                    "template_style": mat_template_style,
+                }
+                st.session_state["mat_gen_product_img"] = product_img
+
                 if mat_ai_bg:
+                    from core.bg_remover import remove_background
                     from core.platforms import get_platform_config
                     platform_cfg = get_platform_config(mat_platforms[0])
                     canvas_w = platform_cfg["width"]
                     canvas_h = platform_cfg["height"]
 
+                    with st.spinner("正在去除背景..."):
+                        rgba_product = remove_background(product_img)
+
                     with st.spinner("正在生成 AI 背景候选..."):
                         try:
                             bg_candidates = generate_ai_background(
+                                product_image=rgba_product,
                                 product_name=selected_mat["name"],
                                 style=mat_template_style,
                                 width=canvas_w,
@@ -468,86 +578,133 @@ elif input_method == "从素材库选择":
                             st.session_state["mat_bg_candidates"] = bg_candidates
                         except Exception as e:
                             st.warning(f"AI 背景生成失败，将使用模板默认背景: {e}")
-
-                if "mat_bg_candidates" in st.session_state and mat_ai_bg:
-                    bg_candidates = st.session_state["mat_bg_candidates"]
-                    st.subheader("选择 AI 背景")
-                    cols = st.columns(4)
-                    for i, bg_img in enumerate(bg_candidates):
-                        with cols[i]:
-                            st.image(bg_img, use_container_width=True, caption=f"方案 {i+1}")
-
-                    selected_bg_idx = st.radio(
-                        "选择背景方案",
-                        options=list(range(len(bg_candidates))),
-                        format_func=lambda x: f"方案 {x+1}",
-                        horizontal=True,
-                        key="mat_bg_select",
-                    )
-                    selected_ai_bg = bg_candidates[selected_bg_idx]
-
-                    if st.button("🔄 换一批背景", key="mat_regenerate"):
-                        st.session_state.pop("mat_bg_candidates", None)
-                        st.rerun()
-
-                with st.spinner("正在生成主图..."):
-                    gen_images = compose_images(
-                        product_image=product_img,
-                        product_info=product_info,
-                        platforms=mat_platforms,
-                        template_style=mat_actual_style,
-                        ai_bg_override=selected_ai_bg,
-                    )
-
-                with st.spinner("正在生成文案..."):
-                    try:
-                        gen_copies = generate_copy(
-                            product_name=selected_mat["name"],
-                            selling_points=selected_mat.get("selling_points", []),
-                            price=selected_mat["price"],
-                            platform=mat_platforms[0],
-                            style=mat_copy_style,
+                            st.session_state.pop("mat_bg_candidates", None)
+                else:
+                    # Non-AI mode: generate immediately
+                    st.session_state.pop("mat_bg_candidates", None)
+                    with st.spinner("正在生成主图..."):
+                        gen_images = compose_images(
+                            product_image=product_img,
+                            product_info=product_info,
+                            platforms=mat_platforms,
+                            template_style=mat_actual_style,
                         )
-                    except Exception as e:
-                        st.error(f"文案生成失败: {e}")
-                        gen_copies = []
+                    with st.spinner("正在生成文案..."):
+                        try:
+                            gen_copies = generate_copy(
+                                product_name=selected_mat["name"],
+                                selling_points=selected_mat.get("selling_points", []),
+                                price=selected_mat["price"],
+                                platform=mat_platforms[0],
+                                style=mat_copy_style,
+                            )
+                        except Exception as e:
+                            st.error(f"文案生成失败: {e}")
+                            gen_copies = []
+                    st.session_state["mat_gen_images"] = gen_images
+                    st.session_state["mat_gen_copies"] = gen_copies
+                    st.session_state["mat_gen_saved"] = False
 
-                # Display results
-                st.subheader("生成结果")
-                for pk, img in gen_images.items():
-                    st.markdown(f"**{PLATFORMS[pk]['label']}** ({img.size[0]}x{img.size[1]})")
-                    st.image(img, use_container_width=True)
+        # --- Candidate selection (persists across reruns via session_state) ---
+        if "mat_bg_candidates" in st.session_state and st.session_state.get("mat_gen_context", {}).get("use_ai_bg"):
+            bg_candidates = st.session_state["mat_bg_candidates"]
+            st.subheader("选择 AI 背景")
+            cols = st.columns(4)
+            for i, bg_img in enumerate(bg_candidates):
+                with cols[i]:
+                    st.image(bg_img, use_container_width=True, caption=f"方案 {i+1}")
 
-                if gen_copies:
-                    st.subheader("候选文案")
-                    for i, ci in enumerate(gen_copies):
-                        with st.expander(f"文案方案 {i + 1}", expanded=True):
-                            st.markdown(f"**标题：** {ci.get('title', '')}")
-                            for sp in ci.get("selling_points", []):
-                                st.markdown(f"- {sp}")
+            selected_bg_idx = st.radio(
+                "选择背景方案",
+                options=list(range(len(bg_candidates))),
+                format_func=lambda x: f"方案 {x+1}",
+                horizontal=True,
+                key="mat_bg_select",
+            )
+            selected_ai_composed = bg_candidates[selected_bg_idx]
 
-                # Save history
+            col_regen, col_confirm = st.columns(2)
+            with col_regen:
+                if st.button("🔄 重新生成（点击后请再按一键生成）", key="mat_regenerate"):
+                    st.session_state.pop("mat_bg_candidates", None)
+                    st.session_state.pop("mat_gen_images", None)
+                    st.session_state.pop("mat_gen_copies", None)
+                    st.rerun()
+            with col_confirm:
+                if st.button("✅ 使用该方案生成", key="mat_confirm", type="primary"):
+                    ctx = st.session_state["mat_gen_context"]
+                    product_img = st.session_state["mat_gen_product_img"]
+                    product_info = ctx["product_info"]
+                    with st.spinner("正在生成主图..."):
+                        gen_images = compose_images(
+                            product_image=product_img,
+                            product_info=product_info,
+                            platforms=ctx["selected_platforms"],
+                            template_style=ctx["actual_style"],
+                            skip_bg_removal=True,
+                            ai_composed_override=selected_ai_composed,
+                        )
+                    with st.spinner("正在生成文案..."):
+                        try:
+                            gen_copies = generate_copy(
+                                product_name=product_info["name"],
+                                selling_points=product_info.get("selling_points", []),
+                                price=product_info["price"],
+                                platform=ctx["selected_platforms"][0],
+                                style=ctx["copy_style"],
+                            )
+                        except Exception as e:
+                            st.error(f"文案生成失败: {e}")
+                            gen_copies = []
+                    st.session_state["mat_gen_images"] = gen_images
+                    st.session_state["mat_gen_copies"] = gen_copies
+                    st.session_state["mat_gen_saved"] = False
+                    st.session_state.pop("mat_bg_candidates", None)
+                    st.rerun()
+
+        # --- Display results (persists across reruns) ---
+        if "mat_gen_images" in st.session_state:
+            gen_images = st.session_state["mat_gen_images"]
+            gen_copies = st.session_state.get("mat_gen_copies", [])
+            ctx = st.session_state.get("mat_gen_context", {})
+
+            # Save history (only once per generation)
+            if not st.session_state.get("mat_gen_saved"):
                 db_mat = Database()
                 output_dir = os.path.join(os.path.dirname(__file__), "..", "data", "outputs")
                 os.makedirs(output_dir, exist_ok=True)
                 for pk, img in gen_images.items():
-                    out_path = os.path.join(output_dir, f"{selected_mat['name']}_{pk}.png")
+                    out_path = os.path.join(output_dir, f"{ctx.get('product_info', {}).get('name', 'product')}_{pk}.png")
                     img.save(out_path)
                     db_mat.save_history(
-                        material_id=selected_mat["id"],
-                        template_name=mat_template_style,
+                        material_id=ctx.get("mat_id", 0),
+                        template_name=ctx.get("template_style", ""),
                         platform=pk,
-                        copy_style=mat_copy_style,
+                        copy_style=ctx.get("copy_style", ""),
                         image_path=out_path,
                         copies=gen_copies,
                     )
+                st.session_state["mat_gen_saved"] = True
 
-                # Download
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w") as zf:
-                    for pk, img in gen_images.items():
-                        buf = io.BytesIO()
-                        img.save(buf, format="PNG")
-                        zf.writestr(f"{pk}_main.png", buf.getvalue())
-                zip_buffer.seek(0)
-                st.download_button("📦 下载全部", data=zip_buffer, file_name=f"{selected_mat['name']}_outputs.zip", mime="application/zip")
+            st.subheader("生成结果")
+            for pk, img in gen_images.items():
+                st.markdown(f"**{PLATFORMS[pk]['label']}** ({img.size[0]}x{img.size[1]})")
+                st.image(img, use_container_width=True)
+
+            if gen_copies:
+                st.subheader("候选文案")
+                for i, ci in enumerate(gen_copies):
+                    with st.expander(f"文案方案 {i + 1}", expanded=True):
+                        st.markdown(f"**标题：** {ci.get('title', '')}")
+                        for sp in ci.get("selling_points", []):
+                            st.markdown(f"- {sp}")
+
+            # Download
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zf:
+                for pk, img in gen_images.items():
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    zf.writestr(f"{pk}_main.png", buf.getvalue())
+            zip_buffer.seek(0)
+            st.download_button("📦 下载全部", data=zip_buffer, file_name=f"{ctx.get('product_info', {}).get('name', 'product')}_outputs.zip", mime="application/zip")

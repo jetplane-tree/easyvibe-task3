@@ -2,11 +2,16 @@
   "name": "清新文艺",
   "platform": "taobao",
   "canvas": { "width": 800, "height": 800 },
-  "background": { "type": "gradient", "colors": ["#E8F5E9", "#FFF9C4"] },
+  "background": {
+    "type": "gradient",
+    "colors": ["#E8F5E9", "#FFF9C4"],
+    "overlay_color": "#1B5E20",
+    "bokeh": { "color": "#FFFFFF", "count": 8, "seed": 56 }
+  },
   "elements": [
-    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 60, "max_height_pct": 55 },
-    { "type": "title", "x": "center", "y": 40, "font_size": 30, "color": "#2E7D32", "font_weight": "normal" },
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 60, "max_height_pct": 55, "glow_color": "#4CAF50" },
+    { "type": "title", "x": "center", "y": 40, "font_size": 30, "color": "#FFFFFF", "font_weight": "normal", "style": "banner", "banner_color": "#2E7D3288" },
     { "type": "price", "x": "center", "y": 740, "font_size": 28, "color": "#558B2F", "prefix": "¥" },
-    { "type": "selling_points", "x": 50, "y": 680, "font_size": 18, "color": "#33691E", "style": "tags", "bg_color": "#C8E6C944" }
+    { "type": "selling_points", "x": 50, "y": 680, "font_size": 18, "color": "#FFFFFF", "bg_color": "#4CAF5099", "layout": "horizontal" }
   ]
 }

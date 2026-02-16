@@ -1,0 +1,16 @@
+{
+  "name": "AI高端质感",
+  "platform": "taobao",
+  "canvas": { "width": 800, "height": 800 },
+  "background": {
+    "type": "ai",
+    "style": "premium",
+    "fallback_colors": ["#1A1A2E", "#16213E"]
+  },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 58, "max_height_pct": 55 },
+    { "type": "title", "x": 50, "y": 40, "font_size": 24, "color": "#D4C5A9", "font_weight": "normal", "stroke_width": 1, "stroke_color": "#00000033" },
+    { "type": "selling_points", "x": 50, "y": 710, "font_size": 14, "color": "#999999", "layout": "plain" },
+    { "type": "price", "x": 50, "y": 740, "font_size": 26, "color": "#C9A84C", "prefix": "¥", "font_weight": "bold" }
+  ]
+}

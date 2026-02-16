@@ -1,0 +1,16 @@
+{
+  "name": "AI促销爆款",
+  "platform": "taobao",
+  "canvas": { "width": 800, "height": 800 },
+  "background": {
+    "type": "ai",
+    "style": "promo",
+    "fallback_colors": ["#FF4444", "#FF6B6B"]
+  },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 60, "max_height_pct": 55 },
+    { "type": "title", "x": "center", "y": 36, "font_size": 28, "color": "#FFFFFF", "font_weight": "bold", "stroke_width": 1, "stroke_color": "#00000055" },
+    { "type": "selling_points", "x": "center", "y": 690, "font_size": 15, "color": "#FFFFFFBB", "layout": "plain" },
+    { "type": "price", "x": "center", "y": 730, "font_size": 38, "color": "#FFD54F", "prefix": "¥", "font_weight": "bold", "stroke_width": 1, "stroke_color": "#00000044" }
+  ]
+}

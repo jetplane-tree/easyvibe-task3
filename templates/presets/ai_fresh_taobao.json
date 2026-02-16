@@ -1,0 +1,16 @@
+{
+  "name": "AI清新文艺",
+  "platform": "taobao",
+  "canvas": { "width": 800, "height": 800 },
+  "background": {
+    "type": "ai",
+    "style": "fresh",
+    "fallback_colors": ["#F5F0E8", "#EDE8D0"]
+  },
+  "elements": [
+    { "type": "product_image", "x": "center", "y": "center", "max_width_pct": 60, "max_height_pct": 55 },
+    { "type": "title", "x": "center", "y": 36, "font_size": 24, "color": "#5D4037", "font_weight": "normal", "stroke_width": 1, "stroke_color": "#FFFFFF44" },
+    { "type": "selling_points", "x": "center", "y": 700, "font_size": 14, "color": "#7B6B5D", "layout": "plain" },
+    { "type": "price", "x": "center", "y": 735, "font_size": 24, "color": "#6B8E23", "prefix": "¥" }
+  ]
+}
