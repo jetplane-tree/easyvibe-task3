@@ -20,6 +20,11 @@ STYLE_MAP = {
     "premium": "高端",
     "fresh": "清新",
     "social": "社交",
+    "ai_promo": "AI促销",
+    "ai_minimal": "AI简约",
+    "ai_premium": "AI高端",
+    "ai_fresh": "AI清新",
+    "ai_social": "AI社交",
 }
 
 
@@ -65,6 +70,7 @@ def compose_images(
     template_style: str = "promo",
     logo: Optional[Image.Image] = None,
     skip_bg_removal: bool = False,
+    ai_bg_override: Optional[Image.Image] = None,
 ) -> dict[str, Image.Image]:
     """Compose product images for multiple platforms.
 
@@ -87,7 +93,7 @@ def compose_images(
     results = {}
     for platform in platforms:
         template = _find_template_for_platform(platform, template_style)
-        composed = render_image(template, clean_image, product_info, logo=logo)
+        composed = render_image(template, clean_image, product_info, logo=logo, ai_bg_override=ai_bg_override)
         results[platform] = composed
 
     return results

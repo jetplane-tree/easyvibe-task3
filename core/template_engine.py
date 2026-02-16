@@ -1,6 +1,7 @@
 import json
 import os
-from PIL import Image, ImageDraw, ImageFont
+import random
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from typing import Optional
 
 
@@ -61,11 +62,167 @@ def _parse_color(color_str: str) -> tuple:
     return (0, 0, 0)
 
 
+# --- New rendering helper functions ---
+
+
+def _draw_overlay_bands(canvas, bg_config):
+    """Draw gradient overlay bands at top/bottom for text readability."""
+    w, h = canvas.size
+    overlay_color = _parse_color(bg_config.get("overlay_color", "#000000"))
+    r, g, b = overlay_color[:3]
+
+    # Top band: 25% of canvas height, fade from alpha=160 to 0
+    top_h = int(h * 0.25)
+    top_band = Image.new("RGBA", (w, top_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(top_band, "RGBA")
+    for y in range(top_h):
+        alpha = int(160 * (1 - y / top_h))
+        draw.line([(0, y), (w, y)], fill=(r, g, b, alpha))
+    canvas.alpha_composite(top_band, (0, 0))
+
+    # Bottom band: 25%, fade from 0 to alpha=160
+    bot_h = int(h * 0.25)
+    bot_band = Image.new("RGBA", (w, bot_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(bot_band, "RGBA")
+    for y in range(bot_h):
+        alpha = int(160 * y / bot_h)
+        draw.line([(0, y), (w, y)], fill=(r, g, b, alpha))
+    canvas.alpha_composite(bot_band, (0, h - bot_h))
+
+
+def _draw_product_glow(canvas, cx, cy, glow_w, glow_h, glow_color):
+    """Draw a radial glow behind the product."""
+    cw, ch = canvas.size
+    glow = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(glow)
+    r, g, b = _parse_color(glow_color)[:3]
+    for i in range(20):
+        ratio = i / 20
+        rx = int(glow_w * 0.3 * (1 + ratio))
+        ry = int(glow_h * 0.3 * (1 + ratio))
+        alpha = int(60 * (1 - ratio))
+        draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=(r, g, b, alpha))
+    glow = glow.filter(ImageFilter.GaussianBlur(25))
+    canvas.alpha_composite(glow)
+
+
+def _draw_price_badge(canvas, text, elem, canvas_w):
+    """Draw price inside a gradient badge."""
+    font = _get_font(elem["font_size"], True)
+    draw_tmp = ImageDraw.Draw(canvas)
+    bbox = draw_tmp.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    pad_x, pad_y = 30, 16
+    badge_w = tw + pad_x * 2
+    badge_h = th + pad_y * 2
+
+    bx = (canvas_w - badge_w) // 2 if elem.get("x") == "center" else elem["x"]
+    by = elem["y"]
+
+    # Gradient rounded rectangle badge
+    badge = Image.new("RGBA", (badge_w, badge_h), (0, 0, 0, 0))
+    badge_draw = ImageDraw.Draw(badge, "RGBA")
+    badge_colors = elem.get("badge_colors", ["#FF4444", "#CC0000"])
+    c1, c2 = _parse_color(badge_colors[0]), _parse_color(badge_colors[1])
+    for row in range(badge_h):
+        ratio = row / badge_h
+        cr = int(c1[0] + (c2[0] - c1[0]) * ratio)
+        cg = int(c1[1] + (c2[1] - c1[1]) * ratio)
+        cb = int(c1[2] + (c2[2] - c1[2]) * ratio)
+        badge_draw.line([(0, row), (badge_w, row)], fill=(cr, cg, cb, 230))
+
+    # Pill-shaped mask
+    mask = Image.new("L", (badge_w, badge_h), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.rounded_rectangle(
+        [0, 0, badge_w - 1, badge_h - 1], radius=badge_h // 2, fill=255
+    )
+    badge.putalpha(mask)
+    canvas.alpha_composite(badge, (bx, by))
+
+    # Draw text on canvas
+    draw_rgba = ImageDraw.Draw(canvas, "RGBA")
+    tx = bx + pad_x
+    ty = by + pad_y
+    color = _parse_color(elem.get("color", "#FFFFFF"))
+    draw_rgba.text((tx, ty), text, fill=color, font=font)
+
+
+def _draw_title_banner(canvas, text, elem, canvas_w):
+    """Draw title text on a semi-transparent banner."""
+    font = _get_font(elem["font_size"], elem.get("font_weight") == "bold")
+    draw_tmp = ImageDraw.Draw(canvas)
+    bbox = draw_tmp.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+    pad_x, pad_y = 40, 12
+    banner_w = tw + pad_x * 2
+    banner_h = th + pad_y * 2
+    bx = (canvas_w - banner_w) // 2 if elem.get("x") == "center" else elem["x"]
+    by = elem["y"]
+
+    banner_color = _parse_color(elem.get("banner_color", "#00000088"))
+    banner = Image.new("RGBA", (banner_w, banner_h), (0, 0, 0, 0))
+    b_draw = ImageDraw.Draw(banner, "RGBA")
+    b_draw.rounded_rectangle(
+        [0, 0, banner_w - 1, banner_h - 1], radius=8, fill=banner_color
+    )
+    canvas.alpha_composite(banner, (bx, by))
+
+    draw_rgba = ImageDraw.Draw(canvas, "RGBA")
+    tx = bx + pad_x
+    ty = by + pad_y
+    color = _parse_color(elem.get("color", "#FFFFFF"))
+    stroke_w = elem.get("stroke_width", 0)
+    stroke_c = _parse_color(elem.get("stroke_color", "#00000066"))
+    if stroke_w > 0:
+        draw_rgba.text(
+            (tx, ty), text, fill=color, font=font,
+            stroke_width=stroke_w, stroke_fill=stroke_c,
+        )
+    else:
+        draw_rgba.text((tx, ty), text, fill=color, font=font)
+
+
+def _draw_bokeh(canvas, bg_config):
+    """Draw decorative bokeh circles."""
+    w, h = canvas.size
+    bokeh_config = bg_config.get("bokeh", {})
+    if not bokeh_config:
+        return
+    color = _parse_color(bokeh_config.get("color", "#FFFFFF"))
+    count = bokeh_config.get("count", 15)
+    seed = bokeh_config.get("seed", 42)
+
+    rng = random.Random(seed)
+    layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer, "RGBA")
+
+    r, g, b = color[:3]
+    for _ in range(count):
+        cx = rng.randint(0, w)
+        cy = rng.randint(0, h)
+        radius = rng.randint(8, 40)
+        alpha = rng.randint(20, 60)
+        draw.ellipse(
+            [cx - radius, cy - radius, cx + radius, cy + radius],
+            fill=(r, g, b, alpha),
+        )
+
+    layer = layer.filter(ImageFilter.GaussianBlur(6))
+    canvas.alpha_composite(layer)
+
+
+# --- End new rendering helpers ---
+
+
 def render_image(
     template: dict,
     product_image: Image.Image,
     product_info: dict,
     logo: Optional[Image.Image] = None,
+    ai_bg_override: Optional[Image.Image] = None,
 ) -> Image.Image:
     """Render a product main image based on template config."""
     canvas_w = template["canvas"]["width"]
@@ -73,11 +230,36 @@ def render_image(
     canvas = Image.new("RGB", (canvas_w, canvas_h), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
 
-    # Draw background
+    # 1. Draw background
     bg = template.get("background", {})
     bg_type = bg.get("type", "solid")
     bg_colors = bg.get("colors", ["#FFFFFF"])
-    if bg_type == "gradient" and len(bg_colors) >= 2:
+    if bg_type == "ai":
+        if ai_bg_override is not None:
+            ai_bg = ai_bg_override
+            if ai_bg.size != (canvas_w, canvas_h):
+                ai_bg = ai_bg.resize((canvas_w, canvas_h), Image.LANCZOS)
+            canvas = ai_bg.convert("RGB")
+            draw = ImageDraw.Draw(canvas)
+        else:
+            from core.bg_generator import generate_ai_background
+
+            try:
+                ai_bgs = generate_ai_background(
+                    product_name=product_info.get("name", "商品"),
+                    style=bg.get("style", "minimal"),
+                    width=canvas_w,
+                    height=canvas_h,
+                    scene_prompt=product_info.get("scene_prompt", ""),
+                    custom_prompt=product_info.get("custom_prompt", ""),
+                    n=1,
+                )
+                canvas = ai_bgs[0]
+                draw = ImageDraw.Draw(canvas)
+            except Exception:
+                fallback_colors = bg.get("fallback_colors", ["#FFFFFF", "#F0F0F0"])
+                _draw_gradient(draw, canvas_w, canvas_h, fallback_colors)
+    elif bg_type == "gradient" and len(bg_colors) >= 2:
         _draw_gradient(draw, canvas_w, canvas_h, bg_colors)
     elif bg_type == "solid":
         canvas.paste(
@@ -85,22 +267,39 @@ def render_image(
         )
         draw = ImageDraw.Draw(canvas)
 
-    # Render elements
+    # 2. Convert canvas to RGBA for alpha compositing
+    if canvas.mode != "RGBA":
+        canvas = canvas.convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+
+    # 3. Decoration layer: overlay bands + bokeh
+    if bg.get("overlay_color"):
+        _draw_overlay_bands(canvas, bg)
+    _draw_bokeh(canvas, bg)
+
+    # 4. Render elements
     for elem in template.get("elements", []):
         elem_type = elem["type"]
         if elem_type == "product_image":
             _place_product_image(canvas, product_image, elem, canvas_w, canvas_h)
         elif elem_type == "title":
-            _draw_text(draw, product_info.get("name", ""), elem, canvas_w)
+            title_text = product_info.get("name", "")
+            if elem.get("style") == "banner":
+                _draw_title_banner(canvas, title_text, elem, canvas_w)
+            else:
+                _draw_text(draw, title_text, elem, canvas_w)
         elif elem_type == "price":
             prefix = elem.get("prefix", "¥")
             price_text = f"{prefix}{product_info.get('price', '')}"
-            _draw_text(draw, price_text, elem, canvas_w)
+            if elem.get("style") == "badge":
+                _draw_price_badge(canvas, price_text, elem, canvas_w)
+            else:
+                _draw_text(draw, price_text, elem, canvas_w)
         elif elem_type == "selling_points":
             points = product_info.get("selling_points", [])
-            _draw_selling_points(draw, points, elem, canvas_w)
+            _draw_selling_points(canvas, draw, points, elem, canvas_w)
 
-    # Overlay logo
+    # 5. Overlay logo
     if logo is not None:
         logo_w = min(logo.width, canvas_w // 6)
         ratio = logo_w / logo.width
@@ -108,15 +307,16 @@ def render_image(
         logo_resized = logo.resize((logo_w, logo_h), Image.LANCZOS)
         pos = (canvas_w - logo_w - 20, canvas_h - logo_h - 20)
         if logo_resized.mode == "RGBA":
-            canvas.paste(logo_resized, pos, logo_resized)
+            canvas.alpha_composite(logo_resized, pos)
         else:
             canvas.paste(logo_resized, pos)
 
-    return canvas
+    # 6. Convert back to RGB for output
+    return canvas.convert("RGB")
 
 
 def _place_product_image(canvas, product_img, elem, canvas_w, canvas_h):
-    """Resize and center-paste the product image onto canvas."""
+    """Resize and center-paste the product image onto canvas with glow and shadow."""
     max_w = int(canvas_w * elem.get("max_width_pct", 60) / 100)
     max_h = int(canvas_h * elem.get("max_height_pct", 55) / 100)
     ratio = min(max_w / product_img.width, max_h / product_img.height)
@@ -125,29 +325,62 @@ def _place_product_image(canvas, product_img, elem, canvas_w, canvas_h):
     resized = product_img.resize((new_w, new_h), Image.LANCZOS)
     x = (canvas_w - new_w) // 2
     y = (canvas_h - new_h) // 2
+
+    # Draw radial glow behind product if configured
+    glow_color = elem.get("glow_color")
+    if glow_color:
+        cx = x + new_w // 2
+        cy = y + new_h // 2
+        _draw_product_glow(canvas, cx, cy, new_w, new_h, glow_color)
+
+    # Draw elliptical shadow beneath the product
+    shadow_h = 20
+    shadow = Image.new("RGBA", (new_w, new_h + shadow_h), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.ellipse(
+        [int(new_w * 0.15), new_h - 10, int(new_w * 0.85), new_h + 15],
+        fill=(0, 0, 0, 40),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(8))
+    canvas.alpha_composite(shadow, (x, y))
+
     if resized.mode == "RGBA":
-        canvas.paste(resized, (x, y), resized)
+        canvas.alpha_composite(resized, (x, y))
     else:
         canvas.paste(resized, (x, y))
 
 
 def _draw_text(draw, text, elem, canvas_w):
-    """Draw a text element on the canvas."""
+    """Draw a text element with optional stroke and shadow."""
     font_size = elem.get("font_size", 28)
     bold = elem.get("font_weight", "normal") == "bold"
     font = _get_font(font_size, bold)
     color = _parse_color(elem.get("color", "#000000"))
+    stroke_width = elem.get("stroke_width", 0)
+    stroke_color = _parse_color(elem.get("stroke_color", "#00000066"))
     x = elem.get("x", 0)
     y = elem.get("y", 0)
     if x == "center":
         bbox = draw.textbbox((0, 0), text, font=font)
         text_w = bbox[2] - bbox[0]
         x = (canvas_w - text_w) // 2
-    draw.text((x, y), text, fill=color, font=font)
+
+    # Shadow (offset 2px, semi-transparent)
+    shadow_color = (0, 0, 0, 80)
+    draw.text((x + 2, y + 2), text, fill=shadow_color, font=font)
+
+    # Main text with optional stroke
+    if stroke_width > 0:
+        draw.text(
+            (x, y), text, fill=color, font=font,
+            stroke_width=stroke_width, stroke_fill=stroke_color,
+        )
+    else:
+        draw.text((x, y), text, fill=color, font=font)
 
 
-def _draw_selling_points(draw, points, elem, canvas_w):
-    """Draw selling point tags."""
+def _draw_selling_points(canvas, draw, points, elem, canvas_w):
+    """Draw selling point tags with vertical or horizontal layout."""
     if not points:
         return
     font_size = elem.get("font_size", 18)
@@ -157,19 +390,53 @@ def _draw_selling_points(draw, points, elem, canvas_w):
     x_start = elem.get("x", 0)
     y_start = elem.get("y", 0)
     padding = 8
-    for i, point in enumerate(points):
-        y = y_start + i * (font_size + 16)
-        bbox = draw.textbbox((0, 0), point, font=font)
-        text_w = bbox[2] - bbox[0]
-        rect_coords = [
-            x_start - padding,
-            y - padding,
-            x_start + text_w + padding,
-            y + font_size + padding,
-        ]
-        # Use rounded_rectangle if available, otherwise fall back to rectangle
-        if hasattr(draw, "rounded_rectangle"):
-            draw.rounded_rectangle(rect_coords, radius=4, fill=bg_color)
-        else:
-            draw.rectangle(rect_coords, fill=bg_color)
-        draw.text((x_start, y), point, fill=color, font=font)
+    layout = elem.get("layout", "vertical")
+
+    if layout == "horizontal":
+        # Horizontal capsule layout with auto-wrap
+        gap = 10
+        cur_x = x_start
+        cur_y = y_start
+        for point in points:
+            bbox = draw.textbbox((0, 0), point, font=font)
+            text_w = bbox[2] - bbox[0]
+            tag_w = text_w + padding * 2
+            tag_h = font_size + padding * 2
+
+            # Wrap to next line if exceeding canvas width
+            if cur_x + tag_w > canvas_w - x_start and cur_x != x_start:
+                cur_x = x_start
+                cur_y += tag_h + gap
+
+            # Draw capsule background
+            tag = Image.new("RGBA", (tag_w, tag_h), (0, 0, 0, 0))
+            tag_draw = ImageDraw.Draw(tag, "RGBA")
+            tag_draw.rounded_rectangle(
+                [0, 0, tag_w - 1, tag_h - 1],
+                radius=tag_h // 2,
+                fill=bg_color,
+            )
+            canvas.alpha_composite(tag, (cur_x, cur_y))
+
+            # Draw text
+            draw_rgba = ImageDraw.Draw(canvas, "RGBA")
+            draw_rgba.text((cur_x + padding, cur_y + padding), point, fill=color, font=font)
+
+            cur_x += tag_w + gap
+    else:
+        # Original vertical layout
+        for i, point in enumerate(points):
+            y = y_start + i * (font_size + 16)
+            bbox = draw.textbbox((0, 0), point, font=font)
+            text_w = bbox[2] - bbox[0]
+            rect_coords = [
+                x_start - padding,
+                y - padding,
+                x_start + text_w + padding,
+                y + font_size + padding,
+            ]
+            if hasattr(draw, "rounded_rectangle"):
+                draw.rounded_rectangle(rect_coords, radius=4, fill=bg_color)
+            else:
+                draw.rectangle(rect_coords, fill=bg_color)
+            draw.text((x_start, y), point, fill=color, font=font)

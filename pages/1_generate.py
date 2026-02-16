@@ -7,6 +7,7 @@ from PIL import Image
 from core.platforms import PLATFORMS
 from core.copy_generator import COPY_STYLES, generate_copy
 from core.image_composer import compose_images
+from core.bg_generator import get_scene_presets, generate_ai_background
 from data.db import Database
 
 st.set_page_config(page_title="生成主图 & 文案", layout="wide")
@@ -14,6 +15,40 @@ st.title("生成主图 & 文案")
 
 # Handle prefill from materials library
 prefill = st.session_state.pop("prefill_material", None)
+
+SCENE_PRESETS = get_scene_presets()
+
+
+def _render_ai_bg_controls(key_prefix: str = ""):
+    """Render AI background controls (category, scene, custom prompt). Returns (scene_prompt, custom_prompt)."""
+    st.markdown("**AI 背景设置**")
+
+    category = st.selectbox(
+        "商品品类",
+        options=["不指定"] + list(SCENE_PRESETS.keys()),
+        key=f"{key_prefix}ai_category",
+    )
+
+    scene_prompt = ""
+    if category != "不指定":
+        scenes = SCENE_PRESETS[category]
+        scene_labels = ["不指定"] + [s["label"] for s in scenes]
+        scene_choice = st.selectbox(
+            "推荐场景",
+            options=scene_labels,
+            key=f"{key_prefix}ai_scene",
+        )
+        if scene_choice != "不指定":
+            scene_prompt = next(s["prompt"] for s in scenes if s["label"] == scene_choice)
+
+    custom_prompt = st.text_input(
+        "补充描述（可选）",
+        placeholder="例：蓝色海洋背景，夏日清凉感",
+        key=f"{key_prefix}ai_custom_prompt",
+    )
+
+    return scene_prompt, custom_prompt
+
 
 # --- Input section ---
 input_method = st.radio("商品信息来源", ["在线录入", "批量导入", "从素材库选择"], horizontal=True)
@@ -48,6 +83,13 @@ if input_method == "在线录入":
                 "social": "社交种草",
             }[k],
         )
+        use_ai_bg = st.checkbox("使用 AI 生成背景（需要通义万相 API Key）", value=False)
+
+        scene_prompt = ""
+        custom_prompt = ""
+        if use_ai_bg:
+            scene_prompt, custom_prompt = _render_ai_bg_controls(key_prefix="inline_")
+
         copy_style = st.selectbox(
             "文案风格",
             options=list(COPY_STYLES.keys()),
@@ -72,10 +114,66 @@ if input_method == "在线录入":
                     "name": product_name,
                     "selling_points": selling_points,
                     "price": price,
+                    "scene_prompt": scene_prompt,
+                    "custom_prompt": custom_prompt,
                 }
 
                 product_img = Image.open(uploaded_file)
                 logo = Image.open(logo_file) if logo_file else None
+
+                actual_style = f"ai_{template_style}" if use_ai_bg else template_style
+
+                # AI background candidate selection flow
+                selected_ai_bg = None
+                if use_ai_bg:
+                    from core.platforms import get_platform_config
+                    platform_cfg = get_platform_config(selected_platforms[0])
+                    canvas_w = platform_cfg["width"]
+                    canvas_h = platform_cfg["height"]
+
+                    with st.spinner("正在生成 AI 背景候选..."):
+                        try:
+                            bg_candidates = generate_ai_background(
+                                product_name=product_name,
+                                style=template_style,
+                                width=canvas_w,
+                                height=canvas_h,
+                                scene_prompt=scene_prompt,
+                                custom_prompt=custom_prompt,
+                                n=4,
+                            )
+                            st.session_state["bg_candidates"] = bg_candidates
+                            st.session_state["bg_gen_params"] = {
+                                "product_name": product_name,
+                                "style": template_style,
+                                "width": canvas_w,
+                                "height": canvas_h,
+                                "scene_prompt": scene_prompt,
+                                "custom_prompt": custom_prompt,
+                            }
+                        except Exception as e:
+                            st.warning(f"AI 背景生成失败，将使用模板默认背景: {e}")
+
+                if "bg_candidates" in st.session_state and use_ai_bg:
+                    bg_candidates = st.session_state["bg_candidates"]
+                    st.subheader("选择 AI 背景")
+                    cols = st.columns(4)
+                    for i, bg_img in enumerate(bg_candidates):
+                        with cols[i]:
+                            st.image(bg_img, use_container_width=True, caption=f"方案 {i+1}")
+
+                    selected_bg_idx = st.radio(
+                        "选择背景方案",
+                        options=list(range(len(bg_candidates))),
+                        format_func=lambda x: f"方案 {x+1}",
+                        horizontal=True,
+                        key="inline_bg_select",
+                    )
+                    selected_ai_bg = bg_candidates[selected_bg_idx]
+
+                    if st.button("🔄 换一批背景", key="inline_regenerate"):
+                        st.session_state.pop("bg_candidates", None)
+                        st.rerun()
 
                 # Generate images
                 with st.spinner("正在生成主图..."):
@@ -83,8 +181,9 @@ if input_method == "在线录入":
                         product_image=product_img,
                         product_info=product_info,
                         platforms=selected_platforms,
-                        template_style=template_style,
+                        template_style=actual_style,
                         logo=logo,
+                        ai_bg_override=selected_ai_bg,
                     )
 
                 # Generate copy
@@ -210,6 +309,13 @@ elif input_method == "批量导入":
         }[k],
         key="batch_style",
     )
+    batch_ai_bg = st.checkbox("使用 AI 生成背景（需要通义万相 API Key）", value=False, key="batch_ai_bg")
+
+    batch_scene_prompt = ""
+    batch_custom_prompt = ""
+    if batch_ai_bg:
+        batch_scene_prompt, batch_custom_prompt = _render_ai_bg_controls(key_prefix="batch_")
+
     batch_copy_style = st.selectbox(
         "文案风格",
         options=list(COPY_STYLES.keys()),
@@ -257,9 +363,12 @@ elif input_method == "批量导入":
                             "name": name,
                             "selling_points": sps,
                             "price": price_val,
+                            "scene_prompt": batch_scene_prompt,
+                            "custom_prompt": batch_custom_prompt,
                         }
+                        batch_actual_style = f"ai_{batch_style}" if batch_ai_bg else batch_style
                         images = compose_images(
-                            product_img, product_info_batch, batch_platforms, batch_style
+                            product_img, product_info_batch, batch_platforms, batch_actual_style
                         )
                         for pk, img in images.items():
                             buf = io.BytesIO()
@@ -306,6 +415,13 @@ elif input_method == "从素材库选择":
             format_func=lambda k: {"promo": "促销爆款", "minimal": "简约白底", "premium": "高端质感", "fresh": "清新文艺", "social": "社交种草"}[k],
             key="mat_style",
         )
+        mat_ai_bg = st.checkbox("使用 AI 生成背景（需要通义万相 API Key）", value=False, key="mat_ai_bg")
+
+        mat_scene_prompt = ""
+        mat_custom_prompt = ""
+        if mat_ai_bg:
+            mat_scene_prompt, mat_custom_prompt = _render_ai_bg_controls(key_prefix="mat_")
+
         mat_copy_style = st.selectbox(
             "文案风格",
             options=list(COPY_STYLES.keys()),
@@ -324,14 +440,63 @@ elif input_method == "从素材库选择":
                     "name": selected_mat["name"],
                     "selling_points": selected_mat.get("selling_points", []),
                     "price": selected_mat["price"],
+                    "scene_prompt": mat_scene_prompt,
+                    "custom_prompt": mat_custom_prompt,
                 }
+
+                mat_actual_style = f"ai_{mat_template_style}" if mat_ai_bg else mat_template_style
+
+                # AI background candidate selection for materials mode
+                selected_ai_bg = None
+                if mat_ai_bg:
+                    from core.platforms import get_platform_config
+                    platform_cfg = get_platform_config(mat_platforms[0])
+                    canvas_w = platform_cfg["width"]
+                    canvas_h = platform_cfg["height"]
+
+                    with st.spinner("正在生成 AI 背景候选..."):
+                        try:
+                            bg_candidates = generate_ai_background(
+                                product_name=selected_mat["name"],
+                                style=mat_template_style,
+                                width=canvas_w,
+                                height=canvas_h,
+                                scene_prompt=mat_scene_prompt,
+                                custom_prompt=mat_custom_prompt,
+                                n=4,
+                            )
+                            st.session_state["mat_bg_candidates"] = bg_candidates
+                        except Exception as e:
+                            st.warning(f"AI 背景生成失败，将使用模板默认背景: {e}")
+
+                if "mat_bg_candidates" in st.session_state and mat_ai_bg:
+                    bg_candidates = st.session_state["mat_bg_candidates"]
+                    st.subheader("选择 AI 背景")
+                    cols = st.columns(4)
+                    for i, bg_img in enumerate(bg_candidates):
+                        with cols[i]:
+                            st.image(bg_img, use_container_width=True, caption=f"方案 {i+1}")
+
+                    selected_bg_idx = st.radio(
+                        "选择背景方案",
+                        options=list(range(len(bg_candidates))),
+                        format_func=lambda x: f"方案 {x+1}",
+                        horizontal=True,
+                        key="mat_bg_select",
+                    )
+                    selected_ai_bg = bg_candidates[selected_bg_idx]
+
+                    if st.button("🔄 换一批背景", key="mat_regenerate"):
+                        st.session_state.pop("mat_bg_candidates", None)
+                        st.rerun()
 
                 with st.spinner("正在生成主图..."):
                     gen_images = compose_images(
                         product_image=product_img,
                         product_info=product_info,
                         platforms=mat_platforms,
-                        template_style=mat_template_style,
+                        template_style=mat_actual_style,
+                        ai_bg_override=selected_ai_bg,
                     )
 
                 with st.spinner("正在生成文案..."):
