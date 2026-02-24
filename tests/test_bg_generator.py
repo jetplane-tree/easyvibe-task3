@@ -316,3 +316,73 @@ class TestGenerateAiBackground:
         product_img = _make_product_image()
         with pytest.raises(RuntimeError, match="图片上传 OSS 失败"):
             generate_ai_background(product_img, "商品", "promo", 800, 800)
+
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-key"})
+    @patch("core.bg_generator.requests.get")
+    @patch("core.bg_generator.requests.post")
+    def test_ref_image_passed_to_api(self, mock_post, mock_get, mock_upload):
+        """When ref_image is provided, ref_image_url should be in API payload."""
+        mock_upload.return_value = MOCK_OSS_URL
+        mock_post.return_value = _mock_submit_response()
+        img_bytes = _make_result_image()
+        mock_get.side_effect = [
+            _mock_poll_response("SUCCEEDED", n=1),
+            _mock_image_download(img_bytes),
+        ]
+
+        product_img = _make_product_image()
+        ref_img = Image.new("RGB", (200, 200), (0, 100, 200))
+        generate_ai_background(
+            product_img, "商品", "promo", 800, 800,
+            ref_image=ref_img,
+        )
+
+        post_call = mock_post.call_args
+        payload = post_call.kwargs.get("json") or post_call[1].get("json")
+        assert "ref_image_url" in payload["input"]
+        assert payload["input"]["ref_image_url"] == MOCK_OSS_URL
+
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-key"})
+    @patch("core.bg_generator.requests.get")
+    @patch("core.bg_generator.requests.post")
+    def test_no_ref_image_omits_field(self, mock_post, mock_get, mock_upload):
+        """Without ref_image, ref_image_url should NOT be in API payload."""
+        mock_post.return_value = _mock_submit_response()
+        img_bytes = _make_result_image()
+        mock_get.side_effect = [
+            _mock_poll_response("SUCCEEDED", n=1),
+            _mock_image_download(img_bytes),
+        ]
+
+        product_img = _make_product_image()
+        generate_ai_background(product_img, "商品", "promo", 800, 800)
+
+        post_call = mock_post.call_args
+        payload = post_call.kwargs.get("json") or post_call[1].get("json")
+        assert "ref_image_url" not in payload["input"]
+
+    @patch.dict(os.environ, {"DASHSCOPE_API_KEY": "test-key"})
+    @patch("core.bg_generator.requests.get")
+    @patch("core.bg_generator.requests.post")
+    def test_ref_image_uses_hint_not_full_prompt(self, mock_post, mock_get, mock_upload):
+        """With ref_image and no text, prompt should use STYLE_HINTS not STYLE_PROMPTS."""
+        mock_post.return_value = _mock_submit_response()
+        img_bytes = _make_result_image()
+        mock_get.side_effect = [
+            _mock_poll_response("SUCCEEDED", n=1),
+            _mock_image_download(img_bytes),
+        ]
+
+        product_img = _make_product_image()
+        ref_img = Image.new("RGB", (200, 200), (0, 100, 200))
+        generate_ai_background(
+            product_img, "商品", "premium", 800, 800,
+            ref_image=ref_img,
+        )
+
+        post_call = mock_post.call_args
+        payload = post_call.kwargs.get("json") or post_call[1].get("json")
+        prompt = payload["input"]["ref_prompt"]
+        # Should use short hint, not full scene description
+        assert "高端" in prompt
+        assert "岩板台面" not in prompt

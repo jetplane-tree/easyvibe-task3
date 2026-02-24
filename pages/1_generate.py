@@ -20,34 +20,70 @@ SCENE_PRESETS = get_scene_presets()
 
 
 def _render_ai_bg_controls(key_prefix: str = ""):
-    """Render AI background controls (category, scene, custom prompt). Returns (scene_prompt, custom_prompt)."""
+    """Render AI background controls (3 modes). Returns (scene_prompt, custom_prompt, ref_image)."""
     st.markdown("**AI 背景设置**")
 
-    category = st.selectbox(
-        "商品品类",
-        options=["不指定"] + list(SCENE_PRESETS.keys()),
-        key=f"{key_prefix}ai_category",
+    bg_source = st.radio(
+        "背景来源",
+        options=["scene_preset", "ref_image", "text_only"],
+        format_func=lambda k: {
+            "scene_preset": "🎨 场景预设",
+            "ref_image": "🖼️ 参考图",
+            "text_only": "✏️ 纯文字描述",
+        }[k],
+        horizontal=True,
+        key=f"{key_prefix}bg_source",
     )
 
     scene_prompt = ""
-    if category != "不指定":
-        scenes = SCENE_PRESETS[category]
-        scene_labels = ["不指定"] + [s["label"] for s in scenes]
-        scene_choice = st.selectbox(
-            "推荐场景",
-            options=scene_labels,
-            key=f"{key_prefix}ai_scene",
+    custom_prompt = ""
+    ref_image = None
+
+    if bg_source == "scene_preset":
+        category = st.selectbox(
+            "商品品类",
+            options=["不指定"] + list(SCENE_PRESETS.keys()),
+            key=f"{key_prefix}ai_category",
         )
-        if scene_choice != "不指定":
-            scene_prompt = next(s["prompt"] for s in scenes if s["label"] == scene_choice)
+        if category != "不指定":
+            scenes = SCENE_PRESETS[category]
+            scene_labels = ["不指定"] + [s["label"] for s in scenes]
+            scene_choice = st.selectbox(
+                "推荐场景",
+                options=scene_labels,
+                key=f"{key_prefix}ai_scene",
+            )
+            if scene_choice != "不指定":
+                scene_prompt = next(s["prompt"] for s in scenes if s["label"] == scene_choice)
+        custom_prompt = st.text_input(
+            "补充描述（可选）",
+            placeholder="例：蓝色海洋背景，夏日清凉感",
+            key=f"{key_prefix}ai_custom_prompt",
+        )
 
-    custom_prompt = st.text_input(
-        "补充描述（可选）",
-        placeholder="例：蓝色海洋背景，夏日清凉感",
-        key=f"{key_prefix}ai_custom_prompt",
-    )
+    elif bg_source == "ref_image":
+        ref_file = st.file_uploader(
+            "上传参考图（风格图或场景图）",
+            type=["jpg", "jpeg", "png"],
+            key=f"{key_prefix}ref_image_file",
+        )
+        if ref_file:
+            ref_image = Image.open(ref_file)
+            st.image(ref_image, width=200, caption="参考图预览")
+        custom_prompt = st.text_input(
+            "补充描述（可选，微调参考图风格）",
+            placeholder="例：光线再暖一点，加一些绿植",
+            key=f"{key_prefix}ref_custom_prompt",
+        )
 
-    return scene_prompt, custom_prompt
+    elif bg_source == "text_only":
+        custom_prompt = st.text_input(
+            "场景描述",
+            placeholder="例：蓝色海洋背景，夏日清凉感",
+            key=f"{key_prefix}text_prompt",
+        )
+
+    return scene_prompt, custom_prompt, ref_image
 
 
 # --- Input section ---
@@ -87,8 +123,9 @@ if input_method == "在线录入":
 
         scene_prompt = ""
         custom_prompt = ""
+        ref_image = None
         if use_ai_bg:
-            scene_prompt, custom_prompt = _render_ai_bg_controls(key_prefix="inline_")
+            scene_prompt, custom_prompt, ref_image = _render_ai_bg_controls(key_prefix="inline_")
 
         copy_style = st.selectbox(
             "文案风格",
@@ -161,6 +198,7 @@ if input_method == "在线录入":
                                 height=canvas_h,
                                 scene_prompt=scene_prompt,
                                 custom_prompt=custom_prompt,
+                                ref_image=ref_image,
                                 n=4,
                             )
                             st.session_state["bg_candidates"] = bg_candidates
@@ -379,8 +417,9 @@ elif input_method == "批量导入":
 
     batch_scene_prompt = ""
     batch_custom_prompt = ""
+    batch_ref_image = None
     if batch_ai_bg:
-        batch_scene_prompt, batch_custom_prompt = _render_ai_bg_controls(key_prefix="batch_")
+        batch_scene_prompt, batch_custom_prompt, batch_ref_image = _render_ai_bg_controls(key_prefix="batch_")
 
     batch_copy_style = st.selectbox(
         "文案风格",
@@ -450,6 +489,7 @@ elif input_method == "批量导入":
                                     height=platform_cfg["height"],
                                     scene_prompt=batch_scene_prompt,
                                     custom_prompt=batch_custom_prompt,
+                                    ref_image=batch_ref_image,
                                     n=1,
                                 )
                                 batch_composed = candidates[0]
@@ -510,8 +550,9 @@ elif input_method == "从素材库选择":
 
         mat_scene_prompt = ""
         mat_custom_prompt = ""
+        mat_ref_image = None
         if mat_ai_bg:
-            mat_scene_prompt, mat_custom_prompt = _render_ai_bg_controls(key_prefix="mat_")
+            mat_scene_prompt, mat_custom_prompt, mat_ref_image = _render_ai_bg_controls(key_prefix="mat_")
 
         mat_copy_style = st.selectbox(
             "文案风格",
@@ -573,6 +614,7 @@ elif input_method == "从素材库选择":
                                 height=canvas_h,
                                 scene_prompt=mat_scene_prompt,
                                 custom_prompt=mat_custom_prompt,
+                                ref_image=mat_ref_image,
                                 n=4,
                             )
                             st.session_state["mat_bg_candidates"] = bg_candidates

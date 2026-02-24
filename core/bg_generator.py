@@ -189,7 +189,13 @@ def _upload_to_oss(local_path: str, api_key: str) -> str:
     return oss_url
 
 
-def _submit_task(base_image_url: str, ref_prompt: str, n: int, api_key: str) -> str:
+def _submit_task(
+    base_image_url: str,
+    ref_prompt: str,
+    n: int,
+    api_key: str,
+    ref_image_url: str = "",
+) -> str:
     """Submit an async background generation task, return task_id."""
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -197,12 +203,15 @@ def _submit_task(base_image_url: str, ref_prompt: str, n: int, api_key: str) -> 
         "X-DashScope-Async": "enable",
         "X-DashScope-OssResourceResolve": "enable",
     }
+    input_data = {
+        "base_image_url": base_image_url,
+        "ref_prompt": ref_prompt,
+    }
+    if ref_image_url:
+        input_data["ref_image_url"] = ref_image_url
     payload = {
         "model": "wanx-background-generation-v2",
-        "input": {
-            "base_image_url": base_image_url,
-            "ref_prompt": ref_prompt,
-        },
+        "input": input_data,
         "parameters": {
             "n": n,
         },
@@ -245,6 +254,7 @@ def generate_ai_background(
     height: int,
     scene_prompt: str = "",
     custom_prompt: str = "",
+    ref_image: Image.Image | None = None,
     n: int = 1,
 ) -> list[Image.Image]:
     """Generate AI background with product composited via DashScope v2.
@@ -261,6 +271,7 @@ def generate_ai_background(
         height: target canvas height
         scene_prompt: optional scene description from presets
         custom_prompt: optional user-supplied extra description
+        ref_image: optional reference image for style/scene guidance
         n: number of images to generate
 
     Returns:
@@ -286,8 +297,15 @@ def generate_ai_background(
 
     # 2. Save to temp file and upload to OSS
     temp_path = _save_rgba_to_temp(canvas)
+    ref_temp_path = None
     try:
         base_image_url = _upload_to_oss(temp_path, api_key)
+
+        # 2b. Upload reference image to OSS if provided
+        ref_image_url = ""
+        if ref_image is not None:
+            ref_temp_path = _save_rgba_to_temp(ref_image.convert("RGBA"))
+            ref_image_url = _upload_to_oss(ref_temp_path, api_key)
 
         # 3. Compose prompt: purely descriptive, no instructions to the model.
         #    Product integrity is guaranteed by re-paste in step 5, not by prompt.
@@ -301,12 +319,17 @@ def generate_ai_background(
             hint = STYLE_HINTS.get(style, STYLE_HINTS["minimal"])
             parts.append(hint)
         else:
-            style_default = STYLE_PROMPTS.get(style, STYLE_PROMPTS["minimal"])
-            parts.append(style_default)
+            # With ref_image but no text, still use short hint (ref_image is the main guide)
+            if ref_image is not None:
+                hint = STYLE_HINTS.get(style, STYLE_HINTS["minimal"])
+                parts.append(hint)
+            else:
+                style_default = STYLE_PROMPTS.get(style, STYLE_PROMPTS["minimal"])
+                parts.append(style_default)
         prompt = "，".join(parts)
 
         # 4. Submit async task and poll
-        task_id = _submit_task(base_image_url, prompt, n, api_key)
+        task_id = _submit_task(base_image_url, prompt, n, api_key, ref_image_url=ref_image_url)
         result_data = _poll_result(task_id, api_key)
 
         # 5. Download result images and blend original product back in.
@@ -347,6 +370,8 @@ def generate_ai_background(
 
         return images
     finally:
-        # 6. Clean up temp file
+        # 6. Clean up temp files
         if os.path.exists(temp_path):
             os.unlink(temp_path)
+        if ref_temp_path and os.path.exists(ref_temp_path):
+            os.unlink(ref_temp_path)
