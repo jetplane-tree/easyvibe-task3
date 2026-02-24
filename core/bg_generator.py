@@ -6,7 +6,7 @@ from io import BytesIO
 import requests
 from dashscope.utils.oss_utils import check_and_upload_local
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageFilter
 
 load_dotenv()
 
@@ -309,12 +309,25 @@ def generate_ai_background(
         task_id = _submit_task(base_image_url, prompt, n, api_key)
         result_data = _poll_result(task_id, api_key)
 
-        # 5. Download result images and re-composite original product
-        #    The API may alter product pixels, so we paste the original product
-        #    back on top to guarantee pixel-perfect preservation.
+        # 5. Download result images and blend original product back in.
+        #    API may alter product pixels, so we re-composite with feathered
+        #    edges: core pixels are 100% original, outer 3-4px smoothly
+        #    transition into the API's lighting/shadows for natural integration.
         results = result_data.get("output", {}).get("results", [])
         if not results:
             raise RuntimeError("AI背景生成失败: 未返回结果图片")
+
+        # Prepare feathered product once for all candidates
+        if resized_product.mode == "RGBA":
+            alpha = resized_product.split()[3]
+            # Contract alpha by 1px to let API's edge effects peek through
+            contracted = alpha.filter(ImageFilter.MinFilter(3))
+            # Feather for smooth transition
+            feathered = contracted.filter(ImageFilter.GaussianBlur(3))
+            product_blended = resized_product.copy()
+            product_blended.putalpha(feathered)
+        else:
+            product_blended = resized_product
 
         images = []
         for result in results:
@@ -322,16 +335,12 @@ def generate_ai_background(
             if not image_url:
                 continue
             img_data = requests.get(image_url, timeout=30).content
-            img = Image.open(BytesIO(img_data)).convert("RGB")
+            img = Image.open(BytesIO(img_data)).convert("RGBA")
             if img.size != (width, height):
                 img = img.resize((width, height), Image.LANCZOS)
-            # Re-paste original product to preserve integrity
-            img_rgba = img.convert("RGBA")
-            img_rgba.paste(
-                resized_product, (x, y),
-                resized_product if resized_product.mode == "RGBA" else None,
-            )
-            images.append(img_rgba.convert("RGB"))
+            # Alpha-composite: feathered product on top of API result
+            img.alpha_composite(product_blended, (x, y))
+            images.append(img.convert("RGB"))
 
         if not images:
             raise RuntimeError("AI背景生成失败: 无法下载结果图片")
